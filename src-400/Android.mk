@@ -25,7 +25,7 @@ LOCAL_MODULE := audio.sklrm.default
 LOCAL_MODULE_RELATIVE_PATH := hw
 
 LOCAL_SRC_FILES := \
-	audio_hw_sklrm.c decoder.c
+	audio_hw_beascon.c decoder.c
 LOCAL_C_INCLUDES += \
 	external/tinyalsa/include \
 	$(call include-path-for, audio-utils) 
