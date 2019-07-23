@@ -52,7 +52,7 @@ int add(unsigned char *inbuff, unsigned char *outbuff,
 	ALOGE("start decoder--");
 	int i = 0, j = 2;
 	char tmp_data;
-	static unsigned char outbuf[256];
+	static unsigned char outbuf[128];
 
 	long step; /* Quantizer step size */
 	signed long predsample; /* Output of ADPCM predictor */

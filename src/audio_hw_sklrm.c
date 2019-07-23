@@ -18,7 +18,6 @@
 
 #define LOG_TAG "audio_hw_sklrm"
 /*#define LOG_NDEBUG 0*/
-#define DUALHID 1
 
 #include <errno.h>
 #include <pthread.h>
@@ -68,8 +67,9 @@
 #define SCO_PERIOD_COUNT 4
 #define SCO_SAMPLING_RATE 8000
 
-#define BLOCKLENGTH 68
-#define DBGRAWDATA 0
+
+#define DEVPATH "/dev/skldev"
+#define SNDNAME "Dummy"
 
 /* minimum sleep time in out_write() when write threshold is not reached */
 #define MIN_WRITE_SLEEP_US 2000
@@ -344,6 +344,20 @@ static int start_input_stream(struct stream_in *in) {
 		pthread_mutex_unlock(&out->lock);
 	}
 
+#if 0
+	if (scanHIDRAWNUM()){
+
+		sprintf(hidraw_path, "/dev/hidraw%d", hidrawnum);
+		fd_hidraw = open(hidraw_path, O_RDONLY|O_NONBLOCK);
+		ALOGE(" open   /dev/hidraw%d OK!\n", hidrawnum);
+
+		if (fd_hidraw < 0)
+			ALOGE("fail to open   %s ,errno = %d!\n", hidraw_path, errno);
+	}
+
+
+#else
+
 	pcm_num = scan_snd_num();
 	in->pcm = pcm_open(pcm_num, device, PCM_IN, in->pcm_config);
 
@@ -353,6 +367,7 @@ static int start_input_stream(struct stream_in *in) {
 		return -ENOMEM;
 	}
 
+#endif
 	/*
 	 * If the stream rate differs from the PCM rate, we need to
 	 * create a resampler.
@@ -798,7 +813,7 @@ static int checkInfo(int num) {
 	sprintf(hidraw_path, "/dev/hidraw%d", num);
 	//sleep(1);
 
-	fd = open(hidraw_path, O_RDONLY|O_NONBLOCK);
+	fd = open(hidraw_path, O_RDONLY);
 	if (fd < 0) {
 		ALOGE("oepn hidraw%d fial ,errno = %d !\n", num, errno);
 		return 0;
@@ -835,31 +850,37 @@ static int checkInfo(int num) {
 	if (res < 0)
 		goto check_err;
 
-        if ((info.vendor == 0x04 || info.vendor == 0x200 || info.vendor == 0x00 || info.vendor ==0x00c4 || info.vendor == 0x1727) 
-		&& (info.product == 0x00 || info.product == 0x7a44 || info.product == 0xb032)) {
+
+	//if (info.vendor == 0x2ba5 && info.product == 0x1882) {    //use for weijing
+	//if (info.vendor == 0x0000 && info.product == 0x0000) {    //use for yinhe
+	//if (info.vendor == 0x04b4 && info.product == 0x5673) {    //use for yinhe new project
+
+        if (info.vendor == 0x04 || info.vendor == 0x200 || info.vendor == 0x00c4 && info.product == 0x7a44) {
 		ALOGE("check hidraw%d success !\n", num);
 		close(fd);
 		return 1;
 	} else {
 		check_err: close(fd);
-		ALOGE("check hidraw%d fail,errno = %d !\n", num,errno);
+		ALOGE("check hidraw%d fail !\n", num);
 		return 0;
 	}
 
 }
 
-//get hid number
 static int scanHIDRAWNUM(void) {
 
 	int i = 0;
 	int fd;
 	char tmpPath[15];
 
-	for (i = 0; i < 64; i++) {
+	for (i = 0; i < 5; i++) {
+
 		if (checkInfo(i)) {
+
 			hidrawnum = i;
 			return 1;
 		}
+
 	}
 
 	return 0;
@@ -893,7 +914,7 @@ static size_t in_get_buffer_size(const struct audio_stream *stream) {
 
 	//return size * audio_stream_frame_size((struct audio_stream *) stream);
 
-	return IN_PERIOD_SIZE;
+	return 512;
 }
 
 static uint32_t in_get_channels(const struct audio_stream *stream) {
@@ -911,7 +932,7 @@ static int in_set_format(struct audio_stream *stream, audio_format_t format) {
 static int in_standby(struct audio_stream *stream) {
 	struct stream_in *in = (struct stream_in *) stream;
 
-#if 1
+#if 0
 	pthread_mutex_lock(&in->dev->lock);
 	pthread_mutex_lock(&in->lock);
 	do_in_standby(in);
@@ -977,18 +998,28 @@ static ssize_t in_read(struct audio_stream_in *stream, void* buffer,
 	struct stream_in *in = (struct stream_in *) stream;
 	struct audio_device *adev = in->dev;
 	size_t frames_rq = bytes / audio_stream_frame_size(&stream->common);
+
+
+
+
 	char hidraw_path[20];
 
+#if 1
 	if (scanHIDRAWNUM()){
 		//ALOGE(" find hidraw");
 		sprintf(hidraw_path, "/dev/hidraw%d", hidrawnum);
 
-		fd_hidraw = open(hidraw_path, O_RDWR|O_NONBLOCK);
+		fd_hidraw = open(hidraw_path, O_RDONLY|O_NONBLOCK);
 		ALOGE(" open   /dev/hidraw%d OK!\n", hidrawnum);
 
 		if (fd_hidraw < 0)
 			ALOGE("fail to open   %s ,errno = %d!\n", hidraw_path, errno);
 	}
+
+#endif
+
+
+	//ALOGE("start in read : %d", bytes);
 
 	/*
 	 * acquiring hw device mutex systematically is useful if a low
@@ -996,63 +1027,62 @@ static ssize_t in_read(struct audio_stream_in *stream, void* buffer,
 	 * executing in_set_parameters() while holding the hw device
 	 * mutex
 	 */
+#if 0
 
-	unsigned char data[IN_PERIOD_SIZE];
-	unsigned char buf_dec[IN_PERIOD_SIZE];
+#else
+	unsigned char data[512];
+	unsigned char buf_dec[512];
 	int rec_id;
 	int preid = 0;
 	int count = 0;
 	int id = 0;
 	int j = 0;
-
 	ALOGE("read data start------------------------------------");
-
 	while(1){
 		memset(buf, 0, sizeof(buf));
 		ret = read(fd_hidraw, buf,21) ;
-
-		#if DBGRAWDATA
-			ALOGE("read data:%d - key no：%x , data:  %x %x %x", ret,buf[1],buf[2],buf[3],buf[4]);
-		#endif 
-
+		//ALOGE("read dataa:%d - %x %x %x %x", ret,buf[1],buf[2],buf[3],buf[4]);
+		//ALOGE("key no - %x",buf[1]);
 		if (ret <= 0) {
 			usleep(5000);
 			count++;
-			ALOGE("read again, errno:%d",errno);
+			//ALOGE("read again");
 		}
 
 		if (count>10) {
 			ALOGE("fail read data--------------------------------");
 			close(fd_hidraw);
-			memset(buffer, 0,IN_PERIOD_SIZE);			
+			memset(buffer, 0,512);			
 			return bytes;
 		}
 
+
        		if ((buf[1] == 0xfe) || (buf[1] == 0x0a)){   //test for taiji
+       		//if (buf[1] == 0x0a) {
+
+    			ALOGE("SKL voice ");   
+				     
             		rec_id= (int)buf[2]*256 + buf[3];
             		ALOGE("SKL---package rec_id=%d",rec_id);
 			//goto finish;    
            		if(preid == rec_id){
+				
 
                 		ALOGE("same id");
 				ALOGE("id count is %d",id);
 				memcpy(data+17*id, buf+4, 17);
-				#if DBGRAWDATA
-				ALOGE("same id data - %x %x %x %x %x %x %x %x %x %x %x %x %x %x %x %x %x",buf[4],buf[5],buf[6],buf[7],buf[8],buf[9],buf[10],buf[11],buf[12],buf[13],buf[14],buf[15],buf[16],buf[17],buf[18],buf[19],buf[20]);
-				#endif
+				//ALOGE("data - %x %x %x %x %x %x %x %x %x %x %x %x %x %x %x %x %x",buf[4],buf[5],buf[6],buf[7],buf[8],buf[9],buf[10],buf[11],buf[12],buf[13],buf[14],buf[15],buf[16],buf[17],buf[18],buf[19],buf[20]);
 				if (id > 2){
                 			
-					//do decoder
-					add(data,buf_dec,BLOCKLENGTH);
-					
-					#if DBGRAWDATA
+					//goto finish;
+					add(data,buf_dec,68);
+					#if 0
 					for (j=0;j<31;j++){
 						ALOGE("SKL decode - %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x",buf_dec[0+j*16],buf_dec[1+j*16],buf_dec[2+j*16],buf_dec[3+j*16],buf_dec[4+j*16],buf_dec[5+j*16],buf_dec[6+j*16],buf_dec[7+j*16],buf_dec[8+j*16],buf_dec[9+j*16],buf_dec[10+j*16],buf_dec[11+j*16],buf_dec[12+j*16],buf_dec[13+j*16],buf_dec[14+j*16],buf_dec[15+j*16]);
 						ALOGE("SKL decode ");   
 					}
 					#endif
-					
-					memcpy(buffer,buf_dec,IN_PERIOD_SIZE);
+					memcpy(buffer,buf_dec,512);
 					memset(data, 0, sizeof(data));
 					count = 0;
                 			goto finish;
@@ -1066,13 +1096,15 @@ static ssize_t in_read(struct audio_stream_in *stream, void* buffer,
                 		memcpy(data, buf+4, 17);
                 		preid = rec_id;
 				id = 1;
-				#if DBGRAWDATA
-				ALOGE("new id data - %x %x %x %x %x %x %x %x %x %x %x %x %x %x %x %x %x",buf[4],buf[5],buf[6],buf[7],buf[8],buf[9],buf[10],buf[11],buf[12],buf[13],buf[14],buf[15],buf[16],buf[17],buf[18],buf[19],buf[20]);
-				#endif            			
+				//ALOGE("data - %x %x %x %x %x %x %x %x %x %x %x %x %x %x %x %x %x",buf[4],buf[5],buf[6],buf[7],buf[8],buf[9],buf[10],buf[11],buf[12],buf[13],buf[14],buf[15],buf[16],buf[17],buf[18],buf[19],buf[20]);
+				//goto finish;
+
+            			
 			}
 		}
  
 	}
+#endif
 
 	if (ret > 0) {
 		ret = 0;
@@ -1087,15 +1119,18 @@ static ssize_t in_read(struct audio_stream_in *stream, void* buffer,
 
 	exit: if (ret < 0) {
 		usleep(
-			bytes * 1000000 / audio_stream_frame_size(&stream->common)
-			/ in_get_sample_rate(&stream->common));
+				bytes * 1000000 / audio_stream_frame_size(&stream->common)
+						/ in_get_sample_rate(&stream->common));
 		ALOGE("in read waiting");
 	}
 
 finish:
-	pthread_mutex_unlock(&in->lock);
+	//pthread_mutex_unlock(&in->lock);
+
 	ALOGE("input read finish:%d------------------------", bytes);
+
 	close(fd_hidraw);
+
 	return bytes;
 }
 
@@ -1233,43 +1268,12 @@ static int adev_open_input_stream(struct audio_hw_device *dev,
 		struct audio_config *config, struct audio_stream_in **stream_in) {
 	struct audio_device *adev = (struct audio_device *) dev;
 	struct stream_in *in;
-	int res = 0;
-	char buf[2];
+	int ret;
 	char hidraw_path[20];
 
 	*stream_in = NULL;
 
 	ALOGE("start open input stream");
-	#if 1
-       //#if DUALHID
-        /* Send a Report to the Device to open mic*/
-        buf[0] = 0x03; /* Report Number */
-        buf[1] = 0x01; /* Open mic */
-
-        if (scanHIDRAWNUM()){
-
-                sprintf(hidraw_path, "/dev/hidraw%d", hidrawnum);
-                fd_hidraw = open(hidraw_path, O_RDWR|O_NONBLOCK);
-                ALOGE(" open   /dev/hidraw%d OK!\n", hidrawnum);
-                if (fd_hidraw < 0)
-                        ALOGE("fail to open   %s ,errno = %d!\n", hidraw_path, errno);
-
-        }
-
-        res = write(fd_hidraw, buf, 2);
-        if (res < 0) {
-                ALOGV("Error write: %d\n", errno);
-        } else {
-                ALOGV("write() wrote %d bytes\n", res);
-        }
-
-        if (fd_hidraw>0)
-                close(fd_hidraw);
-        #endif
-
-
-
-
 	/* Respond with a request for mono if a different format is given. */
 	if (config->channel_mask != AUDIO_CHANNEL_IN_MONO) {
 		config->channel_mask = AUDIO_CHANNEL_IN_MONO;
@@ -1306,48 +1310,15 @@ static int adev_open_input_stream(struct audio_hw_device *dev,
 	return 0;
 }
 
-static int adev_close_input_stream(struct audio_hw_device *dev,
+static void adev_close_input_stream(struct audio_hw_device *dev,
 		struct audio_stream_in *stream) {
 	struct stream_in *in = (struct stream_in *) stream;
-	struct audio_device *adev = (struct audio_device *) dev;
-	in_standby(&stream->common);
-
-
-	int res = 0;
-        char hidraw_path[20];
-	char buf[2];
-	ALOGE("finish read");
-	
-	#if 1
-	//#if DUALHID
-        /* Send a Report to the Device to close mic*/
-        buf[0] = 0x03; /* Report Number */
-        buf[1] = 0x00; /* Close Mic */
-
-        if (scanHIDRAWNUM()){
-                //ALOGE(" find hidraw");
-                sprintf(hidraw_path, "/dev/hidraw%d", hidrawnum);
-
-                fd_hidraw = open(hidraw_path, O_RDWR);
-                ALOGE(" open   /dev/hidraw%d OK!\n", hidrawnum);
-
-                if (fd_hidraw < 0)
-                        ALOGE("fail to open   %s ,errno = %d!\n", hidraw_path, errno);
-        }
-
-        res = write(fd_hidraw, buf, 2);
-        if (res < 0) {
-                ALOGV("Error write: %d\n", errno);
-        } else {
-               	ALOGV("write() wrote %d bytes\n", res);
-        }
-
-	#endif
 
 	//关闭语音输入misc节点
+	close(fd_hidraw);
+	ALOGE("finish read");
+	in_standby(&stream->common);
 	free(stream);
-	return 0;
-
 }
 
 static int adev_dump(const audio_hw_device_t *device, int fd) {
@@ -1357,9 +1328,6 @@ static int adev_dump(const audio_hw_device_t *device, int fd) {
 static int adev_close(hw_device_t *device) {
 	struct audio_device *adev = (struct audio_device *) device;
 	free(device);
-     	if (fd_hidraw > 0)
-        	close(fd_hidraw);
-        ALOGE("finish adev_close");
 	return 0;
 }
 
@@ -1398,6 +1366,7 @@ static int adev_open(const hw_module_t* module, const char* name,
 	adev->hw_device.close_input_stream = adev_close_input_stream;
 	adev->hw_device.dump = adev_dump;
 
+	adev->orientation = ORIENTATION_UNDEFINED;
 	adev->out_device = AUDIO_DEVICE_OUT_SPEAKER;
 	adev->in_device = AUDIO_DEVICE_IN_NEW_MIC & ~AUDIO_DEVICE_BIT_IN;
 
